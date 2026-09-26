@@ -1,43 +1,44 @@
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
-class RequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-
-def run_server():
-    port = int(os.environ.get('PORT', 10000))
-    server = HTTPServer(('0.0.0.0', port), RequestHandler)
-    server.serve_forever()
-
-def keep_alive():
-    t = threading.Thread(target=run_server)
-    t.daemon = True
-    t.start()
-
-
-
 import logging
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
-# Logging Setup
+# --- DUMMY WEB SERVER FOR RENDER (KEEP-ALIVE) ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Elsa bot is awake and healthy!")
+
+    def log_message(self, format, *args):
+        # Suppress console clutter from ping service requests
+        return
+
+def run_web_server():
+    port = int(os.environ.get('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    server.serve_forever()
+
+def keep_alive():
+    server_thread = threading.Thread(target=run_web_server, daemon=True)
+    server_thread.start()
+
+# --- LOGGING SETUP ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-BOT_TOKEN = "8855998132:AAFk39fNIxy51T539R3SIYLmXHgME_5cB3k"   # आपका टोकन
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8855998132:AAFk39fNIxy51T539R3SIYLmXHgME_5cB3k")
 ADMIN_IDS = [8099984863]
 
 # --- DATABASE SCHEMAS (In-Memory Simulation) ---
 db = {
-    "users": {},        # structure: {user_id: {bal, points, premium_until, protect_until, is_dead, ...}}
-    "saved_media": {},  # structure: {command: {"file_id": str, "type": str}}
+    "users": {},
+    "saved_media": {},
     "banned_users": set(),
     "groups": set()
 }
@@ -168,7 +169,7 @@ async def give_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- COMMAND: /gift (Owner Only) ---
 async def gift_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_IDS:
+    if update.effective_user.id not in ADMIN_IDS:
         return
         
     if not update.message.reply_to_message or not context.args:
@@ -215,7 +216,7 @@ async def track_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db["groups"].add(update.effective_chat.id)
 
 async def broadcast_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_IDS or not update.message.reply_to_message:
+    if update.effective_user.id not in ADMIN_IDS or not update.message.reply_to_message:
         return
     
     source_msg = update.message.reply_to_message
@@ -231,7 +232,7 @@ async def broadcast_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"❄️ Broadcast complete to {success_count} direct active users channels.")
 
 async def broadcast_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_IDS or not update.message.reply_to_message:
+    if update.effective_user.id not in ADMIN_IDS or not update.message.reply_to_message:
         return
         
     source_msg = update.message.reply_to_message
@@ -250,7 +251,7 @@ async def broadcast_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def execute_action_extended(update: Update, context: ContextTypes.DEFAULT_TYPE, cmd_key: str, fallback_txt: str):
     user = update.effective_user
     if not update.message.reply_to_message:
-        await update.message.reply_text(f"❄️ Kisi ke message par reply karke apply karein!")
+        await update.message.reply_text("❄️ Kisi ke message par reply karke apply karein!")
         return
         
     target = update.message.reply_to_message.from_user
@@ -276,6 +277,9 @@ async def bite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MAIN ---
 def main():
+    # Start web server thread before starting Telegram long polling
+    keep_alive()
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Track active groups globally
